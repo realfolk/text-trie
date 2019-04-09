@@ -68,6 +68,7 @@ Library
                    , Data.Trie.Text.Internal
                    , Data.Trie.Text.Convenience
                    , Data.Trie.TextInternal
+                   , Data.Text.Internal.Word16
     Other-Modules:   Data.Trie.Text.BitTwiddle
                    , Data.Trie.Errors
     -- The lower bounds are more restrictive than necessary.
@@ -87,6 +88,7 @@ Test-Suite test-text-trie
                   , Data.Trie.Text.Test
                   , FromListBench
                   , FromListBench.Text
+                  , FromListBench.Text.Encode
                   , TrieFile.Text
     build-depends: text-trie
                  , base       >= 4.5   && < 4.13

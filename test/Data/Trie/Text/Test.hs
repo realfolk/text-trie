@@ -21,9 +21,10 @@
 module Data.Trie.Text.Test (test) where
 
 import qualified Data.Trie.Text             as Tr
-import qualified Data.Trie.Text.Internal    as TrI
 import qualified Data.Trie.Text.Convenience as TC
 import qualified Data.Text                  as T
+import qualified Data.Text.Lazy             as L
+import Data.Text.Internal.Word16 (toList16, length16)
 
 import qualified Test.HUnit          as HU
 import qualified Test.QuickCheck     as QC
@@ -34,8 +35,7 @@ import qualified Test.SmallCheck.Series     as SCS
 -- import qualified Test.SparseCheck    as PC
 
 import Data.Function
-import Data.List     (nubBy, sortBy)
-import Data.Ord      (comparing)
+import Data.List     (nubBy, sortOn)
 import GHC.Generics
 import System.IO.Silently (capture)
 ----------------------------------------------------------------
@@ -92,6 +92,10 @@ test  = do
     checkQuick 500  (prop_fromListWithConst_takes_first  :: [(Str, Int)] -> QC.Property)
     putStrLn "prop_fromListWithLConst_takes_first"
     checkQuick 500  (prop_fromListWithLConst_takes_first :: [(Str, Int)] -> QC.Property)
+    putStrLn ""
+
+    putStrLn "prop_length16_is_length_toList16"
+    checkQuick 500  (prop_length16_is_length_toList16 :: Str -> QC.Property)
     putStrLn ""
 
     putStrLn "smallcheck @ () (Text):" -- Beware the exponential!
@@ -247,7 +251,7 @@ instance QCA.Arbitrary Letter where
     shrink = fmap Letter . QCA.shrink . unLetter
 
 
-newtype Str = Str { unStr :: T.Text }
+newtype Str = Str { unStr :: L.Text }
     deriving (Eq, Ord, Show)
 
 instance QCA.Arbitrary Str where
@@ -255,20 +259,25 @@ instance QCA.Arbitrary Str where
         k <- QC.choose (0,n)
         s <- QC.vector k
         c <- QC.arbitrary -- We only want non-empty strings.
-        return . Str . T.pack $ map unLetter (c:s)
+        return . Str . L.pack $ map unLetter (c:s)
 
     shrink = fmap Str . QCA.shrink . unStr
-
 
 instance QCA.Arbitrary T.Text where
   arbitrary = T.pack <$> QCA.arbitrary
 
   shrink = fmap T.pack . QCA.shrink . T.unpack
 
+
+instance QCA.Arbitrary L.Text where
+  arbitrary = L.pack <$> QCA.arbitrary
+
+  shrink = fmap L.pack . QCA.shrink . L.unpack
+
 instance (QCA.Arbitrary a, Generic a) => QCA.Arbitrary (Tr.Trie a) where
     arbitrary = QC.sized $ \n -> do
         k      <- QC.choose (0,n)
-        labels <- map unStr `fmap` QC.vector k
+        labels <- map (L.toStrict . unStr) `fmap` QC.vector k
         elems  <- QC.vector k
         return . Tr.fromList $ zip labels elems
 
@@ -282,7 +291,7 @@ instance Monad m => SCS.Serial m Letter where
   series = SCS.generate $ \d -> take (d+1) $ map Letter letters
 
 instance Monad m => SCS.Serial m Str where
-    series = Str . T.pack . map unLetter <$> SCS.series
+    series = Str . L.pack . map unLetter <$> SCS.series
 
 -- -- TODO: This instance really needs some work. The smart constructures ensure only valid values are generated, but there are redundancies and inefficiencies.
 instance (Monoid a, SCS.Serial m a) => SCS.Serial m (Tr.Trie a) where
@@ -290,8 +299,8 @@ instance (Monoid a, SCS.Serial m a) => SCS.Serial m (Tr.Trie a) where
            SCS.\/  SCS.cons3 arcHACK
            SCS.\/  SCS.cons2 mappend
            where
-           arcHACK (Str k) Nothing  t = Tr.singleton k () >> t
-           arcHACK (Str k) (Just v) t = Tr.singleton k v
+           arcHACK (Str k) Nothing  t = Tr.singleton (L.toStrict k) () >> t
+           arcHACK (Str k) (Just v) t = Tr.singleton (L.toStrict k) v
                                             >>= Tr.unionR t . Tr.singleton T.empty
 
 
@@ -300,13 +309,17 @@ instance (Monoid a, SCS.Serial m a) => SCS.Serial m (Tr.Trie a) where
 -- | If you insert a value, you can look it up
 prop_insert :: (Eq a) => Str -> a -> Tr.Trie a -> Bool
 prop_insert (Str k) v t =
-    (Tr.lookup k . Tr.insert k v $ t) == Just v
+    (Tr.lookup sk . Tr.insert sk v $ t) == Just v
+  where
+    sk = L.toStrict k
 
 
 -- | A singleton, is.
 prop_singleton :: (Eq a) => Str -> a -> Bool
 prop_singleton (Str k) v =
-    Tr.insert k v Tr.empty == Tr.singleton k v
+    Tr.insert sk v Tr.empty == Tr.singleton sk v
+  where
+    sk = L.toStrict k
 
 
 -- | Deal with QC/SC polymorphism issues because of (==>)
@@ -347,43 +360,51 @@ instance (Monad m, SC.Testable m a) => CheckGuard a (SC.Property m) where
     (==>) = (SC.==>)
 
 prop_size_insert :: (Eq a, Show a, CheckGuard QC.Property b) => Str -> a -> Tr.Trie a -> b
-prop_size_insert (Str k) v t = not (k `Tr.member` t) ==> (
-    (Tr.size . Tr.insert k v) === ((1+) . Tr.size)
+prop_size_insert (Str k) v t = not (sk `Tr.member` t) ==> (
+    (Tr.size . Tr.insert sk v) === ((1+) . Tr.size)
     $ t)
+  where
+    sk = L.toStrict k
 
 prop_size_delete :: (Eq a, Show a, CheckGuard QC.Property b) => Str -> a -> Tr.Trie a -> b
-prop_size_delete (Str k) v t = not (k `Tr.member` t) ==> (
-    (Tr.size . Tr.delete k . Tr.insert k v) === Tr.size
+prop_size_delete (Str k) v t = not (sk `Tr.member` t) ==> (
+    (Tr.size . Tr.delete sk . Tr.insert sk v) === Tr.size
     $ t)
+  where
+    sk = L.toStrict k
 
 prop_insert_delete :: (Eq a, Show a, CheckGuard QC.Property b) => Str -> a -> Tr.Trie a -> b
-prop_insert_delete (Str k) v t = not (k `Tr.member` t) ==> (
-    (Tr.delete k . Tr.insert k v) === id
+prop_insert_delete (Str k) v t = not (sk `Tr.member` t) ==> (
+    (Tr.delete sk . Tr.insert sk v) === id
     $ t)
+  where
+    sk = L.toStrict k
 
 prop_delete_lookup :: (Eq a, Show a, CheckGuard QC.Property b) => Str -> Tr.Trie a -> b
-prop_delete_lookup (Str k) t = not (k `Tr.member` t) ==> (
-    (Tr.lookup k . Tr.delete k) === const Nothing
+prop_delete_lookup (Str k) t = not (sk `Tr.member` t) ==> (
+    (Tr.lookup sk . Tr.delete sk) === const Nothing
     $ t)
+  where
+    sk = L.toStrict k
 
 
 -- | All keys in a submap are keys in the supermap
 prop_submap1 :: Str -> Tr.Trie a -> Bool
 prop_submap1 (Str k) t =
-    all (`Tr.member` t) . Tr.keys . Tr.submap k $ t
+    all ((`Tr.member` t) . L.toStrict) . Tr.keys . Tr.submap (L.toStrict k) $ t
 
 
 -- | All keys in a submap have the query as a prefix
 prop_submap2 :: Str -> Tr.Trie a -> Bool
 prop_submap2 (Str k) t =
-    all (T.isPrefixOf k) . Tr.keys . Tr.submap k $ t
+    all (L.isPrefixOf k) . Tr.keys . Tr.submap (L.toStrict k) $ t
 
 
 -- | All values in a submap are the same in the supermap
 prop_submap3 :: (Eq a) => Str -> Tr.Trie a -> Bool
 prop_submap3 (Str k) t =
-    (\q -> Tr.lookup q t' == Tr.lookup q t) `all` Tr.keys t'
-    where t' = Tr.submap k t
+    (\q -> Tr.lookup q t' == Tr.lookup q t) `all` fmap L.toStrict (Tr.keys t')
+    where t' = Tr.submap (L.toStrict k) t
 
 
 infix 4 <==
@@ -398,45 +419,47 @@ x <== y =
 
 -- | Keys are ordered when converting to a list
 prop_toList :: Tr.Trie a -> QC.Property
-prop_toList t = ordered (TrI.toList16 <$> Tr.keys t)
+prop_toList t = ordered (toList16 . L.toStrict <$> Tr.keys t)
     where ordered xs = QC.conjoin (zipWith (<==) xs (drop 1 xs))
 
 
-_takes_first :: (Eq c, Show c) => ([(T.Text, c)] -> Tr.Trie c) -> [(Str, c)] -> QC.Property
+_takes_first :: (Eq c, Show c) => ([(L.Text, c)] -> Tr.Trie c) -> [(Str, c)] -> QC.Property
 _takes_first f assocs =
-    (Tr.toList . f) === (nubBy (apFst ((==) `on` TrI.toList16)) . sortBy (comparing (TrI.toList16 . fst)))
+    (Tr.toList . f) === (nubBy (apFst ((==) `on` (toList16 . L.toStrict))) . sortOn (toList16 . L.toStrict . fst))
     $ map (first unStr) assocs
 
 
 -- | 'fromList' takes the first value for a given key
 prop_fromList_takes_first :: (Eq a, Show a) => [(Str, a)] -> QC.Property
-prop_fromList_takes_first = _takes_first Tr.fromList
+prop_fromList_takes_first = _takes_first (Tr.fromList . fmap (first L.toStrict))
 
 
 -- | 'fromListR' takes the first value for a given key
 prop_fromListR_takes_first :: (Eq a, Show a) => [(Str, a)] -> QC.Property
-prop_fromListR_takes_first = _takes_first TC.fromListR
+prop_fromListR_takes_first = _takes_first (TC.fromListR . fmap (first L.toStrict))
 
 
 -- | 'fromListL' takes the first value for a given key
 prop_fromListL_takes_first :: (Eq a, Show a) => [(Str, a)] -> QC.Property
-prop_fromListL_takes_first = _takes_first TC.fromListL
+prop_fromListL_takes_first = _takes_first (TC.fromListL . fmap (first L.toStrict))
 
 
 -- | 'fromListS' takes the first value for a given key
 prop_fromListS_takes_first :: (Eq a, Show a) => [(Str, a)] -> QC.Property
-prop_fromListS_takes_first = _takes_first TC.fromListS
+prop_fromListS_takes_first = _takes_first (TC.fromListS . fmap (first L.toStrict))
 
 
 -- | @('fromListWith' const)@ takes the first value for a given key
 prop_fromListWithConst_takes_first :: (Eq a, Show a) => [(Str, a)] -> QC.Property
-prop_fromListWithConst_takes_first = _takes_first (TC.fromListWith const)
+prop_fromListWithConst_takes_first = _takes_first (TC.fromListWith const . fmap (first L.toStrict))
 
 
 -- | @('fromListWithL' const)@ takes the first value for a given key
 prop_fromListWithLConst_takes_first :: (Eq a, Show a) => [(Str, a)] -> QC.Property
-prop_fromListWithLConst_takes_first = _takes_first (TC.fromListWithL const)
+prop_fromListWithLConst_takes_first = _takes_first (TC.fromListWithL const . fmap (first L.toStrict))
 
+prop_length16_is_length_toList16 :: Str -> QC.Property
+prop_length16_is_length_toList16 = (length16 . L.toStrict . unStr) === (length . toList16 . L.toStrict . unStr)
 
 ----------------------------------------------------------------
 -- | Lift a function to apply to the first of pairs, retaining the second.

@@ -73,7 +73,7 @@ fromListL = foldl' (flip . uncurry $ insertIfAbsent) empty
 -- than worst-case for 'fromListL'. The 'fromList' function is
 -- currently just an alias for 'fromListR'.
 fromListR :: [(Text,a)] -> Trie a
-{-# INLINE fromListR #-}
+{-# INLINE [0] fromListR #-}
 fromListR = fromList -- == foldr (uncurry insert) empty
 
 

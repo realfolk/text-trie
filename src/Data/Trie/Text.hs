@@ -67,6 +67,7 @@ import Data.Trie.Errors   (impossible)
 
 import Data.Text          (Text)
 import qualified Data.Text as T
+import qualified Data.Text.Lazy as L
 
 import Data.Maybe         (isJust)
 import Control.Monad      (liftM)
@@ -86,14 +87,14 @@ fromList = foldr (uncurry insert) empty
 
 
 -- | Convert trie into association list. Keys will be in sorted order.
-toList :: Trie a -> [(Text,a)]
+toList :: Trie a -> [(L.Text,a)]
 {-# INLINE toList #-}
 toList  = toListBy (,)
 
 -- FIX? should 'keys' and 'elems' move to Data.Trie.Convenience instead?
 
 -- | Return all keys in the trie, in sorted order.
-keys :: Trie a -> [Text]
+keys :: Trie a -> [L.Text]
 {-# INLINE keys #-}
 keys = toListBy const
 

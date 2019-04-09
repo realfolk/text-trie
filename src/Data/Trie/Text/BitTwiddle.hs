@@ -2,6 +2,7 @@
 
 -- The MagicHash is for unboxed primitives (-fglasgow-exts also works)
 {-# LANGUAGE CPP, MagicHash #-}
+{-# LANGUAGE BangPatterns #-}
 
 ----------------------------------------------------------------
 --                                                  ~ 2019.04.03
@@ -22,8 +23,6 @@
 module Data.Trie.Text.BitTwiddle
     ( Prefix, Mask
 
-    , elemToNat
-
     , zero, nomatch
 
     , mask, shorter, branchMask
@@ -34,11 +33,13 @@ import Data.Trie.TextInternal (TextElem)
 import Data.Bits
 
 #if __GLASGOW_HASKELL__ >= 503
-import GHC.Exts  ( Word(..), Int(..), shiftRL# )
+import GHC.Exts  (Int(..), uncheckedShiftRL# )
+import GHC.Word (Word16(..))
 #elif __GLASGOW_HASKELL__
-import GlaExts   ( Word(..), Int(..), shiftRL# )
+import GlaExts   ( Word8(..), Int(..), uncheckedShiftRL# )
+import GHC.Word (Word16(..))
 #else
-import Data.Word (Word)
+import Data.Word (Word16(..))
 #endif
 
 ----------------------------------------------------------------
@@ -47,22 +48,14 @@ type KeyElem = TextElem
 type Prefix  = KeyElem
 type Mask    = KeyElem
 
-elemToNat :: KeyElem -> Word
-{-# INLINE elemToNat #-}
-elemToNat = fromIntegral
 
-natToElem :: Word -> KeyElem
-{-# INLINE natToElem #-}
-natToElem = fromIntegral
-
-
-shiftRL :: Word -> Int -> Word
-{-# INLINE shiftRL #-}
+uncheckedShiftRL :: Word16 -> Int -> Word16
+{-# INLINE [0] uncheckedShiftRL #-}
 #if __GLASGOW_HASKELL__
--- GHC: use unboxing to get @shiftRL@ inlined.
-shiftRL (W# x) (I# i) = W# (shiftRL# x i)
+-- GHC: use unboxing to get @uncheckedShiftRL@ inlined.
+uncheckedShiftRL (W16# x) (I# i) = W16# (uncheckedShiftRL# x i)
 #else
-shiftRL x i = shiftR x i
+uncheckedShiftRL x i = shiftR x i
 #endif
 
 
@@ -70,23 +63,21 @@ shiftRL x i = shiftR x i
 -- Endian independent bit twiddling (Trie endianness, not architecture)
 ---------------------------------------------------------------}
 
--- TODO: should we use the (Bits Word8) instance instead of 'elemToNat' and (Bits Nat)? We need to compare Core, C--, or ASM in order to decide this. The choice will apply to 'zero', 'mask', 'maskW',... If we shouldn't, then we should probably send a patch upstream to fix the (Bits Word8) instance.
-
 -- | Is the value under the mask zero?
 zero :: KeyElem -> Mask -> Bool
-{-# INLINE zero #-}
-zero i m = (elemToNat i) .&. (elemToNat m) == 0
+{-# INLINE [0] zero #-}
+zero !i !m = i .&. m == 0
 
 
 -- | Does a value /not/ match some prefix, for all the bits preceding
 -- a masking bit? (Hence a subtree matching the value doesn't exist.)
 nomatch :: KeyElem -> Prefix -> Mask -> Bool
-{-# INLINE nomatch #-}
-nomatch i p m = mask i m /= p
+{-# INLINE [0] nomatch #-}
+nomatch !i !p !m = mask i m /= p
 
 mask :: KeyElem -> Mask -> Prefix
-{-# INLINE mask #-}
-mask i m = maskW (elemToNat i) (elemToNat m)
+{-# INLINE [0] mask #-}
+mask !i !m = maskW i m
 
 
 {---------------------------------------------------------------
@@ -95,9 +86,9 @@ mask i m = maskW (elemToNat i) (elemToNat m)
 
 -- | Get mask by setting all bits higher than the smallest bit in
 -- @m@. Then apply that mask to @i@.
-maskW :: Word -> Word -> Prefix
-{-# INLINE maskW #-}
-maskW i m = natToElem (i .&. (complement (m-1) `xor` m))
+maskW :: Word16 -> Word16 -> Prefix
+{-# INLINE [0] maskW #-}
+maskW !i !m = i .&. (complement (m-1) `xor` m)
 -- TODO: try the alternatives mentioned in the Containers paper:
 -- \i m -> natToElem (i .&. (negate m - m))
 -- \i m -> natToElem (i .&. (m * complement 1))
@@ -107,16 +98,16 @@ maskW i m = natToElem (i .&. (complement (m-1) `xor` m))
 -- | Determine whether the first mask denotes a shorter prefix than
 -- the second.
 shorter :: Mask -> Mask -> Bool
-{-# INLINE shorter #-}
-shorter m1 m2 = elemToNat m1 > elemToNat m2
+{-# INLINE [0] shorter #-}
+shorter !m1 !m2 = m1 > m2
 
 
 
 -- | Determine first differing bit of two prefixes.
 branchMask :: Prefix -> Prefix -> Mask
-{-# INLINE branchMask #-}
-branchMask p1 p2
-    = natToElem (highestBitMask (elemToNat p1 `xor` elemToNat p2))
+{-# INLINE [0] branchMask #-}
+branchMask !p1 !p2
+    = highestBitMask (p1 `xor` p2)
 
 
 {---------------------------------------------------------------
@@ -164,16 +155,23 @@ branchMask p1 p2
   into highly efficient machine code. The algorithm is derived from
   Jorg Arndt's FXT library.
 ---------------------------------------------------------------}
-highestBitMask :: Word -> Word
-{-# INLINE highestBitMask #-}
-highestBitMask x
-    = case (x .|. shiftRL x 1) of
-       x -> case (x .|. shiftRL x 2) of
-        x -> case (x .|. shiftRL x 4) of
-         x -> case (x .|. shiftRL x 8) of
-          x -> case (x .|. shiftRL x 16) of
-           x -> case (x .|. shiftRL x 32) of   -- for 64 bit platforms
-            x -> (x `xor` shiftRL x 1)
+-- highestBitMask !x
+--     = case (x .|. uncheckedShiftRL x 1) of
+--        !x -> case (x .|. uncheckedShiftRL x 2) of
+--         !x -> case (x .|. uncheckedShiftRL x 4) of
+--          !x -> case (x .|. uncheckedShiftRL x 8) of
+--           -- !x -> case (x .|. uncheckedShiftRL x 16) of
+--            -- !x -> case (x .|. uncheckedShiftRL x 32) of   -- for 64 bit platforms
+--             !x -> (x `xor` uncheckedShiftRL x 1)
+highestBitMask :: Word16 -> Word16
+{-# INLINE [0] highestBitMask #-}
+highestBitMask !x0 =
+  let !x1 = x0 .|. uncheckedShiftRL x0 1 in
+  let !x2 = x1 .|. uncheckedShiftRL x1 2 in
+  let !x3 = x2 .|. uncheckedShiftRL x2 4 in
+  let !x4 = x3 .|. uncheckedShiftRL x3 8 in
+  (x4 `xor` uncheckedShiftRL x4 1)
+
 
 ----------------------------------------------------------------
 ----------------------------------------------------------- fin.

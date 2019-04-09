@@ -31,6 +31,7 @@ breakMaximalPrefix
     :: Text
     -> Text
     -> (Text, Text, Text)
+{-# INLINE [0] breakMaximalPrefix #-}
 breakMaximalPrefix x y =
   maybe (T.empty, x, y) id $
     T.commonPrefixes x y

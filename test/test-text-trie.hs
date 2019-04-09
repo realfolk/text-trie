@@ -13,6 +13,7 @@ import qualified Data.Trie.TextInternal.Test
 import qualified Data.Trie.Text.Test
 import qualified FromListBench
 import qualified FromListBench.Text
+import qualified FromListBench.Text.Encode
 import qualified TrieFile.Text
 
 main :: IO ()
@@ -35,6 +36,11 @@ main = do
   putStrLn "FromListBench.Text"
   FromListBench.Text.test
   putStrLn "End: FromListBench.Text"
+  putStrLn ""
+
+  putStrLn "FromListBench.Text.Encode"
+  FromListBench.Text.Encode.test
+  putStrLn "End: FromListBench.Text.Encode"
   putStrLn ""
 
   putStrLn "TrieFile.Text"

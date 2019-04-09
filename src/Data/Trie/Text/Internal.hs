@@ -1,5 +1,5 @@
 -- To make GHC stop warning about the Prelude
-{-# OPTIONS_GHC -Wall -fwarn-tabs -fno-warn-unused-imports #-}
+{-# OPTIONS_GHC -Wall -fwarn-tabs #-}
 {-# LANGUAGE NoImplicitPrelude #-}
 
 -- For list fusion on toListBy, and guarding `base` versions.
@@ -59,22 +59,17 @@ module Data.Trie.Text.Internal
     -- * Priority-queue functions
     , minAssoc, maxAssoc
     , updateMinViewBy, updateMaxViewBy
-
-    -- * Internal Text access
-    , toList16
     ) where
 
 import Prelude hiding    (null, lookup)
-import qualified Prelude (null, lookup)
 
 import Data.Trie.Text.BitTwiddle
 import Data.Trie.TextInternal
 
 import Data.Text (Text)
 import qualified Data.Text as T
-import qualified Data.Text.Internal as TI
-import qualified Data.Text.Unsafe as TU
-import qualified Data.Text.Array as TA
+import qualified Data.Text.Lazy as L
+import Data.Text.Internal.Word16 (head16, length16)
 
 import Data.Binary
 #if MIN_VERSION_base(4,9,0)
@@ -459,19 +454,6 @@ getPrefix Empty = error "getPrefix: no Prefix of Empty"
 -- Error messages
 -----------------------------------------------------------}
 
-head16 :: Text -> Word16
-head16 (TI.Text xs i0 _) = xs `TA.unsafeIndex` i0
-
-tail16 :: Text -> Maybe Text
-tail16 xs | T.null xs = Nothing
-          | otherwise = Just $ TU.dropWord16 1 xs
-
-toList16 :: Text -> [Word16]
-toList16 xs =
-  case tail16 xs of
-    Nothing -> []
-    Just ys -> head16 xs : toList16 ys
-
 
 -- TODO: shouldn't we inline the logic and just NOINLINE the string constant? There are only three use sites, which themselves aren't inlined...
 errorLogHead :: String -> Text -> TextElem
@@ -490,20 +472,20 @@ errorLogHead fn q
 
 -- | /O(1)/, Construct the empty trie.
 empty :: Trie a
-{-# INLINE empty #-}
+{-# INLINE [0] empty #-}
 empty = Empty
 
 
 -- | /O(1)/, Is the trie empty?
 null :: Trie a -> Bool
-{-# INLINE null #-}
+{-# INLINE [1] null #-}
 null Empty = True
-null _         = False
+null _     = False
 
 
 -- | /O(1)/, Construct a singleton trie.
 singleton :: Text -> a -> Trie a
-{-# INLINE singleton #-}
+{-# INLINE [0] singleton #-}
 singleton k v = Arc k (Just v) Empty
 -- For singletons, don't need to verify invariant on arc length >0
 
@@ -545,8 +527,8 @@ size' (Arc _ (Just _) t) f n = size' t f $! n + 1
 --
 -- | Convert a trie into a list (in key-sorted order) using a
 -- function, folding the list as we go.
-foldrWithKey :: (Text -> a -> b -> b) -> b -> Trie a -> b
-foldrWithKey fcons nil = \t -> go T.empty t nil
+foldrWithKey :: (L.Text -> a -> b -> b) -> b -> Trie a -> b
+foldrWithKey fcons nil = \t -> go L.empty t nil
     where
     go _ Empty            = id
     go q (Branch _ _ l r) = go q l . go q r
@@ -556,7 +538,7 @@ foldrWithKey fcons nil = \t -> go T.empty t nil
         Just v  -> fcons k' v . rest
         where
         rest = go k' t
-        k'   = T.append q k
+        k'   = L.append q (L.fromStrict k)
 
 
 
@@ -565,7 +547,7 @@ foldrWithKey fcons nil = \t -> go T.empty t nil
 --
 -- | Convert a trie into a list using a function. Resulting values
 -- are in key-sorted order.
-toListBy :: (Text -> a -> b) -> Trie a -> [b]
+toListBy :: (L.Text -> a -> b) -> Trie a -> [b]
 {-# INLINE toListBy #-}
 #if !defined(__GLASGOW_HASKELL__)
 -- TODO: should probably inline foldrWithKey
@@ -579,7 +561,7 @@ toListBy f t = build (toListByFB f t)
 -- and a rule to rewrite generic lazy version into it. As per
 -- Data.ByteString.unpack and the comments there about strictness
 -- and fusion.
-toListByFB :: (Text -> a -> b) -> Trie a -> (b -> c -> c) -> c -> c
+toListByFB :: (L.Text -> a -> b) -> Trie a -> (b -> c -> c) -> c -> c
 {-# INLINE [0] toListByFB #-}
 toListByFB f t cons nil = foldrWithKey ((cons .) . f) nil t
 #endif
@@ -671,10 +653,6 @@ errorEmptyAfterNothing s = errorInvariantBroken s "Empty after Nothing"
 
 -- TODO: would it be worth it to have a variant like 'lookupBy_' which takes the three continuations?
 
--- | Length of `Text` in `Word16`'s
-length16 :: Text -> Int
-length16 (TI.Text _ off len) = len - off
-
 -- | Given a query, find the longest prefix with an associated value
 -- in the trie, returning the length of that prefix and the associated
 -- value.
@@ -693,18 +671,29 @@ match_ = flip start
     goNothing _ _    Empty       = Nothing
 
     goNothing n q   (Arc k mv t) =
-        let (p,k',q') = breakMaximalPrefix k q
-            n'        = n + length16 p
-        in n' `seq`
-            if T.null k'
-            then
-                if T.null q'
-                then (,) n' <$> mv
-                else
-                    case mv of
-                    Nothing -> goNothing   n' q' t
-                    Just v  -> goJust n' v n' q' t
-            else Nothing
+      case T.commonPrefixes k q of
+        Nothing ->
+          if T.null k
+          then
+              if T.null q
+              then (,) n <$> mv
+              else
+                  case mv of
+                  Nothing -> goNothing  n q t
+                  Just v  -> goJust n v n q t
+          else Nothing
+        Just (p,k',q') ->
+          let n' = n + length16 p
+          in n' `seq`
+              if T.null k'
+              then
+                  if T.null q'
+                  then (,) n' <$> mv
+                  else
+                      case mv of
+                      Nothing -> goNothing   n' q' t
+                      Just v  -> goJust n' v n' q' t
+              else Nothing
 
     goNothing n q t_@(Branch _ _ _ _) = findArc t_
         where
@@ -723,21 +712,35 @@ match_ = flip start
     goJust n0 v0 _ _    Empty       = Just (n0,v0)
 
     goJust n0 v0 n q   (Arc k mv t) =
-        let (p,k',q') = breakMaximalPrefix k q
-            n'        = n + length16 p
-        in n' `seq`
-            if T.null k'
-            then
-                if T.null q'
-                then
-                    case mv of
-                    Nothing -> Just (n0,v0)
-                    Just v  -> Just (n',v)
-                else
-                    case mv of
-                    Nothing -> goJust n0 v0 n' q' t
-                    Just v  -> goJust n' v  n' q' t
-            else Just (n0,v0)
+      case T.commonPrefixes k q of
+        Nothing ->
+          if T.null k
+          then
+              if T.null q
+              then
+                  case mv of
+                  Nothing -> Just (n0,v0)
+                  Just v  -> Just (n,v)
+              else
+                  case mv of
+                  Nothing -> goJust n0 v0 n q t
+                  Just v  -> goJust n  v  n q t
+          else Just (n0,v0)
+        Just (p,k',q') ->
+          let n' = n + length16 p
+          in n' `seq`
+              if T.null k'
+              then
+                  if T.null q'
+                  then
+                      case mv of
+                      Nothing -> Just (n0,v0)
+                      Just v  -> Just (n',v)
+                  else
+                      case mv of
+                      Nothing -> goJust n0 v0 n' q' t
+                      Just v  -> goJust n' v  n' q' t
+              else Just (n0,v0)
 
     goJust n0 v0 n q t_@(Branch _ _ _ _) = findArc t_
         where
@@ -783,7 +786,7 @@ matchFB_ = \t q cons nil -> matchFB_' cons q t nil
         go _ _    Empty       = id
 
         go n q   (Arc k mv t) =
-            let (p,k',q') = breakMaximalPrefix k q
+            let (p,k',q') = breakMaximalPrefix k q -- foobar
                 n'        = n + length16 p
             in n' `seq`
                 if T.null k'
