@@ -1,0 +1,178 @@
+Data.Trie.TextInternal.Test
+("hello","","")
+("hello","","")
+
+
+("h","ello","i")
+("h","ello","i")
+
+
+("he","llo","at")
+("he","llo","at")
+
+
+("hel","lo","d")
+("hel","lo","d")
+
+
+("hell","o","")
+("hell","o","")
+
+
+("hello","","")
+("hello","","")
+
+
+("","hello","jello")
+("","hello","jello")
+
+
+End: Data.Trie.TextInternal.Test
+
+Data.Trie.Text.Test
+
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+hunit:
+
+quickcheck @ Int (Text):
+prop_insert
++++ OK, passed 500 tests.
+prop_singleton
++++ OK, passed 5000 tests.
+prop_size_insert
++++ OK, passed 500 tests.
+prop_size_delete
++++ OK, passed 500 tests.
+prop_insert_delete
++++ OK, passed 500 tests.
+prop_delete_lookup
++++ OK, passed 500 tests.
+prop_submap1
++++ OK, passed 500 tests.
+prop_submap2
++++ OK, passed 500 tests.
+prop_submap3
++++ OK, passed 500 tests.
+prop_toList
++++ OK, passed 500 tests.
+prop_fromList_takes_first
++++ OK, passed 500 tests.
+prop_fromListR_takes_first
++++ OK, passed 500 tests.
+prop_fromListL_takes_first
++++ OK, passed 500 tests.
+prop_fromListS_takes_first
++++ OK, passed 500 tests.
+prop_fromListWithConst_takes_first
++++ OK, passed 500 tests.
+prop_fromListWithLConst_takes_first
++++ OK, passed 500 tests.
+
+prop_length16_is_length_toList16
++++ OK, passed 500 tests.
+
+smallcheck @ () (Text):
+prop_insert
+Completed 410 tests without failure.
+
+prop_singleton
+Completed 8660 tests without failure.
+
+prop_size_insert
+Completed 410 tests without failure.
+But 22 did not meet ==> condition.
+
+prop_size_delete
+Completed 410 tests without failure.
+But 22 did not meet ==> condition.
+
+prop_insert_delete
+Completed 410 tests without failure.
+But 22 did not meet ==> condition.
+
+prop_delete_lookup
+Completed 410 tests without failure.
+But 22 did not meet ==> condition.
+
+prop_submap1
+Completed 410 tests without failure.
+
+prop_submap2
+Completed 410 tests without failure.
+
+
+End: Data.Trie.Text.Test
+
+FromListBench
+* fromListR obverse: .................
+  44.499ns per iteration / 22472.57 per second.
+* fromListL obverse: ..............
+  188.917ns per iteration / 5293.32 per second.
+
+* fromListR reverse: ..............
+  282.445ns per iteration / 3540.51 per second.
+* fromListL reverse: .................
+  44.957ns per iteration / 22243.56 per second.
+
+
+* fromListR obverse sorted: .................
+  46.250ns per iteration / 21621.59 per second.
+* fromListL obverse sorted: ..............
+  179.668ns per iteration / 5565.83 per second.
+
+* fromListR reverse sorted: .................
+  44.011ns per iteration / 22721.55 per second.
+* fromListL reverse sorted: ..............
+  169.227ns per iteration / 5909.23 per second.
+End: FromListBench
+
+FromListBench.Text
+* fromListR obverse: .................
+  45.306ns per iteration / 22071.96 per second.
+* fromListL obverse: ..............
+  269.202ns per iteration / 3714.68 per second.
+
+* fromListR reverse: ..............
+  366.425ns per iteration / 2729.07 per second.
+* fromListL reverse: .................
+  44.477ns per iteration / 22483.34 per second.
+
+
+* fromListR obverse sorted: ................
+  50.894ns per iteration / 19648.77 per second.
+* fromListL obverse sorted: ..............
+  278.447ns per iteration / 3591.35 per second.
+
+* fromListR reverse sorted: ................
+  52.973ns per iteration / 18877.69 per second.
+* fromListL reverse sorted: ..............
+  302.306ns per iteration / 3307.91 per second.
+End: FromListBench.Text
+
+FromListBench.Text.Encode
+* fromListR obverse: ...............
+  175.814ns per iteration / 5687.84 per second.
+* fromListL obverse: ..............
+  421.238ns per iteration / 2373.95 per second.
+
+* fromListR reverse: ..............
+  357.746ns per iteration / 2795.28 per second.
+* fromListL reverse: ...............
+  151.781ns per iteration / 6588.46 per second.
+
+
+* fromListR obverse sorted: ...............
+  175.879ns per iteration / 5685.72 per second.
+* fromListL obverse sorted: ..............
+  329.390ns per iteration / 3035.92 per second.
+
+* fromListR reverse sorted: ...............
+  177.095ns per iteration / 5646.68 per second.
+* fromListL reverse sorted: ..............
+  354.499ns per iteration / 2820.88 per second.
+End: FromListBench.Text.Encode
+
+TrieFile.Text
+No Trie file to benchmark
+End: TrieFile.Text
+

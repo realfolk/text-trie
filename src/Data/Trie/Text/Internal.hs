@@ -1,19 +1,21 @@
 -- To make GHC stop warning about the Prelude
-{-# OPTIONS_GHC -Wall -fwarn-tabs -fno-warn-unused-imports #-}
+{-# OPTIONS_GHC -Wall -fwarn-tabs #-}
 {-# LANGUAGE NoImplicitPrelude #-}
 
 -- For list fusion on toListBy, and guarding `base` versions.
 {-# LANGUAGE CPP #-}
+#ifdef __GLASGOW_HASKELL__
+{-# LANGUAGE StandaloneDeriving, DeriveGeneric #-}
+#endif
 
 ------------------------------------------------------------
---                                              ~ 2019.02.24
+--                                              ~ 2019.04.03
 -- |
--- Module      :  Data.Trie.Internal
--- Copyright   :  Copyright (c) 2008--2019 wren gayle romano
+-- Module      :  Data.Trie.Text.Internal
+-- Copyright   :  Copyright (c) 2008--2015 wren gayle romano, 2019 michael j. klein
 -- License     :  BSD3
--- Maintainer  :  wren@cpan.org
--- Stability   :  provisional
--- Portability :  portable (with CPP)
+-- Maintainer  :  lambdamichael@gmail.com
+-- Stability   :  experimental
 --
 -- Internal definition of the 'Trie' data type and generic functions
 -- for manipulating them. Almost everything here is re-exported
@@ -22,12 +24,12 @@
 -- access to the abstract type.
 ------------------------------------------------------------
 
-module Data.Trie.Internal
+module Data.Trie.Text.Internal
     (
     -- * Data types
       Trie(), showTrie
 
-    -- * Functions for 'ByteString's
+    -- * Functions for 'Text'
     , breakMaximalPrefix
 
     -- * Basic functions
@@ -60,11 +62,14 @@ module Data.Trie.Internal
     ) where
 
 import Prelude hiding    (null, lookup)
-import qualified Prelude (null, lookup)
 
-import qualified Data.ByteString as S
-import Data.Trie.ByteStringInternal
-import Data.Trie.BitTwiddle
+import Data.Trie.Text.BitTwiddle
+import Data.Trie.TextInternal
+
+import Data.Text (Text)
+import qualified Data.Text as T
+import qualified Data.Text.Lazy as L
+import Data.Text.Internal.Word16 (head16, length16)
 
 import Data.Binary
 #if MIN_VERSION_base(4,9,0)
@@ -79,6 +84,7 @@ import Data.Traversable    (Traversable(traverse))
 
 #ifdef __GLASGOW_HASKELL__
 import GHC.Exts (build)
+import GHC.Generics (Generic, Generic1)
 #endif
 ------------------------------------------------------------
 ------------------------------------------------------------
@@ -161,7 +167,7 @@ data Trie a = Empty
 -- be curious to know.
 
 data Trie a = Empty
-            | Arc    {-# UNPACK #-} !ByteString
+            | Arc    {-# UNPACK #-} !Text
                                     !(Maybe a)
                                     !(Trie a)
             | Branch {-# UNPACK #-} !Prefix
@@ -169,8 +175,11 @@ data Trie a = Empty
                                     !(Trie a)
                                     !(Trie a)
     deriving Eq
-    -- Prefix/Mask should be deterministic regardless of insertion order
-    -- TODO: prove this is so.
+
+#ifdef __GLASGOW_HASKELL__
+deriving instance Generic1 Trie
+deriving instance Generic a => Generic (Trie a)
+#endif
 
 
 -- TODO? add Ord instance like Data.Map?
@@ -187,25 +196,24 @@ instance (Show a) => Show (Trie a) where
     showsPrec p t = showParen (p > 10)
                   $ ("Data.Trie.fromList "++) . shows (toListBy (,) t)
 
-
 -- | Visualization fuction for debugging.
 showTrie :: (Show a) => Trie a -> String
 showTrie t = shows' id t ""
-    where
+  where
     spaces f = map (const ' ') (f "")
-
-    shows' _  Empty            = (".\n"++)
+    shows' _ Empty = (".\n" ++)
     shows' ss (Branch p m l r) =
-        let s'  = ("--"++) . shows p . (","++) . shows m . ("-+"++)
-            ss' = ss . (tail (spaces s') ++)
-        in s'              . shows' (ss' . ("|"++)) l
-           . ss' . ("|\n"++)
-           . ss' . ("`"++) . shows' (ss' . (" "++)) r
+      let s' = ("--" ++) . shows p . ("," ++) . shows m . ("-+" ++)
+          ss' = ss . (tail (spaces s') ++)
+       in s' .
+          shows' (ss' . ("|" ++)) l .
+          ss' . ("|\n" ++) . ss' . ("`" ++) . shows' (ss' . (" " ++)) r
     shows' ss (Arc k mv t') =
-        let s' = ("--"++) . shows k
-                 . maybe id (\v -> ("-("++) . shows v . (")"++)) mv
-                 . ("--"++)
-        in  s' . shows' (ss . (spaces s' ++)) t'
+      let s' =
+            ("--" ++) .
+            shows k .
+            maybe id (\v -> ("-(" ++) . shows v . (")" ++)) mv . ("--" ++)
+       in s' . shows' (ss . (spaces s' ++)) t'
 
 
 -- TODO?? a Read instance? hrm... should I?
@@ -235,34 +243,13 @@ instance Functor Trie where
         go (Arc k (Just v) t) = Arc k (Just (f v)) (go t)
         go (Branch p m l r)   = Branch p m (go l) (go r)
 
-
 instance Foldable Trie where
-    -- If our definition of foldr is so much faster than the Endo
-    -- default, then maybe we should remove this and use the default
-    -- foldMap based on foldr
     foldMap f = go
         where
         go Empty              = mempty
         go (Arc _ Nothing  t) = go t
         go (Arc _ (Just v) t) = f v `mappend` go t
         go (Branch _ _ l r)   = go l `mappend` go r
-
-    {- This definition is much faster, but it's also wrong
-    -- (or at least different than foldrWithKey)
-    foldr f = \z t -> go t id z
-        where
-        go Empty              k x = k x
-        go (Branch _ _ l r)   k x = go r (go l k) x
-        go (Arc _ Nothing t)  k x = go t k x
-        go (Arc _ (Just v) t) k x = go t k (f v x)
-
-    foldl f = \z t -> go t id z
-        where
-        go Empty              k x = k x
-        go (Branch _ _ l r)   k x = go l (go r k) x
-        go (Arc _ Nothing t)  k x = go t k x
-        go (Arc _ (Just v) t) k x = go t k (f x v)
-    -}
 
 -- TODO: newtype Keys = K Trie  ; instance Foldable Keys
 -- TODO: newtype Assoc = A Trie ; instance Foldable Assoc
@@ -290,7 +277,7 @@ instance Applicative Trie where
 --  2. m >>= return    == m
 --  3. (m >>= f) >>= g == m >>= (\x -> f x >>= g)
 instance Monad Trie where
-    return = singleton S.empty
+    return = singleton T.empty
 
     (>>=) Empty              _ = empty
     (>>=) (Branch p m l r)   f = branch p m (l >>= f) (r >>= f)
@@ -304,6 +291,7 @@ instance Monad Trie where
 -- The "Data.Semigroup" module is in base since 4.9.0.0; but having
 -- the 'Semigroup' superclass for the 'Monoid' instance only comes
 -- into force in base 4.11.0.0.
+
 instance (Semigroup a) => Semigroup (Trie a) where
     (<>) = mergeBy $ \x y -> Just (x <> y)
     -- TODO: optimized implementations of:
@@ -315,7 +303,6 @@ instance (Semigroup a) => Semigroup (Trie a) where
 instance (Monoid a) => Monoid (Trie a) where
     mempty  = empty
     mappend = mergeBy $ \x y -> Just (x `mappend` y)
-
 
 -- Since the Monoid instance isn't natural in @a@, I can't think
 -- of any other sensible instance for MonadPlus. It's as specious
@@ -358,14 +345,13 @@ filterMap f = go
 -- | Generic version of 'fmap'. This function is notably more
 -- expensive than 'fmap' or 'filterMap' because we have to reconstruct
 -- the keys.
-mapBy :: (ByteString -> a -> Maybe b) -> Trie a -> Trie b
-mapBy f = go S.empty
+mapBy :: (Text -> a -> Maybe b) -> Trie a -> Trie b
+mapBy f = go T.empty
     where
     go _ Empty              = empty
-    go q (Arc k Nothing  t) = arc k Nothing  (go q' t) where q' = S.append q k
-    go q (Arc k (Just v) t) = arc k (f q' v) (go q' t) where q' = S.append q k
+    go q (Arc k Nothing  t) = arc k Nothing  (go q' t) where q' = T.append q k
+    go q (Arc k (Just v) t) = arc k (f q' v) (go q' t) where q' = T.append q k
     go q (Branch p m l r)   = branch p m (go q l) (go q r)
-
 
 -- | A variant of 'fmap' which provides access to the subtrie rooted
 -- at each value.
@@ -397,17 +383,17 @@ contextualFilterMap f = go
     go (Arc k (Just v) t) = arc k (f v t) (go t)
     go (Branch p m l r)   = branch p m (go l) (go r)
 
-
 -- | A contextual variant of 'mapBy'. Again note that this is
 -- expensive since we must reconstruct the keys.
-contextualMapBy :: (ByteString -> a -> Trie a -> Maybe b) -> Trie a -> Trie b
-contextualMapBy f = go S.empty
+contextualMapBy :: (Text -> a -> Trie a -> Maybe b) -> Trie a -> Trie b
+contextualMapBy f = go T.empty
     where
     go _ Empty              = empty
-    go q (Arc k Nothing  t) = arc k Nothing (go (S.append q k) t)
-    go q (Arc k (Just v) t) = let q' = S.append q k
+    go q (Arc k Nothing  t) = arc k Nothing (go (T.append q k) t)
+    go q (Arc k (Just v) t) = let q' = T.append q k
                               in arc k (f q' v t) (go q' t)
     go q (Branch p m l r)   = branch p m (go q l) (go q r)
+
 
 
 {-----------------------------------------------------------
@@ -424,13 +410,15 @@ branch p m l     r     = Branch p m l r
 
 -- | Smart constructor to prune @Arc@s that lead nowhere.
 -- N.B if mv=Just then doesn't check whether t=epsilon. It's up to callers to ensure that invariant isn't broken.
-arc :: ByteString -> Maybe a -> Trie a -> Trie a
+arc :: Text -> Maybe a -> Trie a -> Trie a
 {-# INLINE arc #-}
-arc k mv@(Just _)   t                            = Arc k mv t
-arc _    Nothing    Empty                        = Empty
-arc k    Nothing  t@(Branch _ _ _ _) | S.null k  = t
-                                     | otherwise = Arc k Nothing t
-arc k    Nothing    (Arc k' mv' t')              = Arc (S.append k k') mv' t'
+arc k mv@(Just _) t = Arc k mv t
+arc _ Nothing Empty = Empty
+arc k Nothing t@(Branch _ _ _ _)
+  | T.null k = t
+  | otherwise = Arc k Nothing t
+arc k Nothing (Arc k' mv' t') = Arc (T.append k k') mv' t'
+
 
 
 -- | Smart constructor to join two tries into a @Branch@ with maximal
@@ -449,29 +437,30 @@ branchMerge p1 t1  p2 t2
     m = branchMask p1 p2
     p = mask p1 m
 
-
 -- It would be better if Arc used
 -- Data.ByteString.TrieInternal.wordHead somehow, that way
 -- we can see 4/8/?*Word8 at a time instead of just one.
 -- But that makes maintaining invariants ...difficult :(
 getPrefix :: Trie a -> Prefix
 {-# INLINE getPrefix #-}
-getPrefix (Branch p _ _ _)        = p
-getPrefix (Arc k _ _) | S.null k  = 0 -- for lack of a better value
-                      | otherwise = S.head k
-getPrefix Empty                   = error "getPrefix: no Prefix of Empty"
+getPrefix (Branch p _ _ _) = p
+getPrefix (Arc k _ _)
+  | T.null k = 0 -- for lack of a better value
+  | otherwise = head16 k
+getPrefix Empty = error "getPrefix: no Prefix of Empty"
 
 
 {-----------------------------------------------------------
 -- Error messages
 -----------------------------------------------------------}
 
+
 -- TODO: shouldn't we inline the logic and just NOINLINE the string constant? There are only three use sites, which themselves aren't inlined...
-errorLogHead :: String -> ByteString -> ByteStringElem
+errorLogHead :: String -> Text -> TextElem
 {-# NOINLINE errorLogHead #-}
 errorLogHead fn q
-    | S.null q  = error $ "Data.Trie.Internal." ++ fn ++": found null subquery"
-    | otherwise = S.head q
+    | T.null q  = error $ "Data.Trie.Internal." ++ fn ++": found null subquery"
+    | otherwise = head16 q
 
 
 ------------------------------------------------------------
@@ -483,28 +472,28 @@ errorLogHead fn q
 
 -- | /O(1)/, Construct the empty trie.
 empty :: Trie a
-{-# INLINE empty #-}
+{-# INLINE [0] empty #-}
 empty = Empty
 
 
 -- | /O(1)/, Is the trie empty?
 null :: Trie a -> Bool
-{-# INLINE null #-}
+{-# INLINE [1] null #-}
 null Empty = True
 null _     = False
 
 
 -- | /O(1)/, Construct a singleton trie.
-singleton :: ByteString -> a -> Trie a
-{-# INLINE singleton #-}
+singleton :: Text -> a -> Trie a
+{-# INLINE [0] singleton #-}
 singleton k v = Arc k (Just v) Empty
 -- For singletons, don't need to verify invariant on arc length >0
-
 
 -- | /O(n)/, Get count of elements in trie.
 size  :: Trie a -> Int
 {-# INLINE size #-}
 size t = size' t id 0
+
 
 -- | /O(n)/, CPS accumulator helper for calculating 'size'.
 size' :: Trie a -> (Int -> Int) -> Int -> Int
@@ -512,6 +501,7 @@ size' Empty              f n = f n
 size' (Branch _ _ l r)   f n = size' l (size' r f) n
 size' (Arc _ Nothing t)  f n = size' t f n
 size' (Arc _ (Just _) t) f n = size' t f $! n + 1
+
 
 
 {-----------------------------------------------------------
@@ -537,8 +527,8 @@ size' (Arc _ (Just _) t) f n = size' t f $! n + 1
 --
 -- | Convert a trie into a list (in key-sorted order) using a
 -- function, folding the list as we go.
-foldrWithKey :: (ByteString -> a -> b -> b) -> b -> Trie a -> b
-foldrWithKey fcons nil = \t -> go S.empty t nil
+foldrWithKey :: (L.Text -> a -> b -> b) -> b -> Trie a -> b
+foldrWithKey fcons nil = \t -> go L.empty t nil
     where
     go _ Empty            = id
     go q (Branch _ _ l r) = go q l . go q r
@@ -548,7 +538,8 @@ foldrWithKey fcons nil = \t -> go S.empty t nil
         Just v  -> fcons k' v . rest
         where
         rest = go k' t
-        k'   = S.append q k
+        k'   = L.append q (L.fromStrict k)
+
 
 
 -- cf Data.ByteString.unpack
@@ -556,7 +547,7 @@ foldrWithKey fcons nil = \t -> go S.empty t nil
 --
 -- | Convert a trie into a list using a function. Resulting values
 -- are in key-sorted order.
-toListBy :: (ByteString -> a -> b) -> Trie a -> [b]
+toListBy :: (L.Text -> a -> b) -> Trie a -> [b]
 {-# INLINE toListBy #-}
 #if !defined(__GLASGOW_HASKELL__)
 -- TODO: should probably inline foldrWithKey
@@ -570,10 +561,12 @@ toListBy f t = build (toListByFB f t)
 -- and a rule to rewrite generic lazy version into it. As per
 -- Data.ByteString.unpack and the comments there about strictness
 -- and fusion.
-toListByFB :: (ByteString -> a -> b) -> Trie a -> (b -> c -> c) -> c -> c
+toListByFB :: (L.Text -> a -> b) -> Trie a -> (b -> c -> c) -> c -> c
 {-# INLINE [0] toListByFB #-}
 toListByFB f t cons nil = foldrWithKey ((cons .) . f) nil t
 #endif
+
+
 
 
 {-----------------------------------------------------------
@@ -589,19 +582,19 @@ toListByFB f t cons nil = foldrWithKey ((cons .) . f) nil t
 -- This function is intended for internal use. For the public-facing
 -- version, see @lookupBy@ in "Data.Trie".
 lookupBy_ :: (Maybe a -> Trie a -> b) -> b -> (Trie a -> b)
-          -> ByteString -> Trie a -> b
+          -> Text -> Trie a -> b
 lookupBy_ f z a = lookupBy_'
     where
     -- | Deal with epsilon query (when there is no epsilon value)
-    lookupBy_' q t@(Branch _ _ _ _) | S.null q = f Nothing t
-    lookupBy_' q t                             = go q t
+    lookupBy_' q t@(Branch _ _ _ _) | T.null q = f Nothing t
+    lookupBy_' q t                                 = go q t
 
     -- | The main recursion
     go _    Empty       = z
 
     go q   (Arc k mv t) =
-        let (_,k',q')   = breakMaximalPrefix k q
-        in case (not $ S.null k', S.null q') of
+        let (_,k',q')       = breakMaximalPrefix k q
+        in case (not $ T.null k', T.null q') of
                 (True,  True)  -> a (Arc k' mv t)
                 (True,  False) -> z
                 (False, True)  -> f mv t
@@ -621,6 +614,8 @@ lookupBy_ f z a = lookupBy_'
         findArc Empty         = z
 
 
+
+
 -- This function needs to be here, not in "Data.Trie", because of
 -- 'arc' which isn't exported. We could use the monad instance
 -- instead, though it'd be far more circuitous.
@@ -630,7 +625,7 @@ lookupBy_ f z a = lookupBy_'
 --           of (>>=) for epsilon`elem`t)
 --
 -- | Return the subtrie containing all keys beginning with a prefix.
-submap :: ByteString -> Trie a -> Trie a
+submap :: Text -> Trie a -> Trie a
 {-# INLINE submap #-}
 submap q = lookupBy_ (arc q) empty (arc q Nothing) q
 {-  -- Disable superfluous error checking.
@@ -656,7 +651,6 @@ errorEmptyAfterNothing s = errorInvariantBroken s "Empty after Nothing"
 -- -}
 
 
-
 -- TODO: would it be worth it to have a variant like 'lookupBy_' which takes the three continuations?
 
 -- | Given a query, find the longest prefix with an associated value
@@ -666,29 +660,40 @@ errorEmptyAfterNothing s = errorInvariantBroken s "Empty after Nothing"
 -- This function may not have the most useful return type. For a
 -- version that returns the prefix itself as well as the remaining
 -- string, see @match@ in "Data.Trie".
-match_ :: Trie a -> ByteString -> Maybe (Int, a)
+match_ :: Trie a -> Text -> Maybe (Int, a)
 match_ = flip start
     where
     -- | Deal with epsilon query (when there is no epsilon value)
-    start q (Branch _ _ _ _) | S.null q = Nothing
-    start q t                           = goNothing 0 q t
+    start q (Branch _ _ _ _) | T.null q = Nothing
+    start q t                               = goNothing 0 q t
 
     -- | The initial recursion
     goNothing _ _    Empty       = Nothing
 
     goNothing n q   (Arc k mv t) =
-        let (p,k',q') = breakMaximalPrefix k q
-            n'        = n + S.length p
-        in n' `seq`
-            if S.null k'
-            then
-                if S.null q'
-                then (,) n' <$> mv
-                else
-                    case mv of
-                    Nothing -> goNothing   n' q' t
-                    Just v  -> goJust n' v n' q' t
-            else Nothing
+      case T.commonPrefixes k q of
+        Nothing ->
+          if T.null k
+          then
+              if T.null q
+              then (,) n <$> mv
+              else
+                  case mv of
+                  Nothing -> goNothing  n q t
+                  Just v  -> goJust n v n q t
+          else Nothing
+        Just (p,k',q') ->
+          let n' = n + length16 p
+          in n' `seq`
+              if T.null k'
+              then
+                  if T.null q'
+                  then (,) n' <$> mv
+                  else
+                      case mv of
+                      Nothing -> goNothing   n' q' t
+                      Just v  -> goJust n' v n' q' t
+              else Nothing
 
     goNothing n q t_@(Branch _ _ _ _) = findArc t_
         where
@@ -707,21 +712,35 @@ match_ = flip start
     goJust n0 v0 _ _    Empty       = Just (n0,v0)
 
     goJust n0 v0 n q   (Arc k mv t) =
-        let (p,k',q') = breakMaximalPrefix k q
-            n'        = n + S.length p
-        in n' `seq`
-            if S.null k'
-            then
-                if S.null q'
-                then
-                    case mv of
-                    Nothing -> Just (n0,v0)
-                    Just v  -> Just (n',v)
-                else
-                    case mv of
-                    Nothing -> goJust n0 v0 n' q' t
-                    Just v  -> goJust n' v  n' q' t
-            else Just (n0,v0)
+      case T.commonPrefixes k q of
+        Nothing ->
+          if T.null k
+          then
+              if T.null q
+              then
+                  case mv of
+                  Nothing -> Just (n0,v0)
+                  Just v  -> Just (n,v)
+              else
+                  case mv of
+                  Nothing -> goJust n0 v0 n q t
+                  Just v  -> goJust n  v  n q t
+          else Just (n0,v0)
+        Just (p,k',q') ->
+          let n' = n + length16 p
+          in n' `seq`
+              if T.null k'
+              then
+                  if T.null q'
+                  then
+                      case mv of
+                      Nothing -> Just (n0,v0)
+                      Just v  -> Just (n',v)
+                  else
+                      case mv of
+                      Nothing -> goJust n0 v0 n' q' t
+                      Just v  -> goJust n' v  n' q' t
+              else Just (n0,v0)
 
     goJust n0 v0 n q t_@(Branch _ _ _ _) = findArc t_
         where
@@ -737,6 +756,7 @@ match_ = flip start
         findArc Empty         = Just (n0,v0)
 
 
+
 -- | Given a query, find all prefixes with associated values in the
 -- trie, returning their lengths and values. This function is a
 -- good producer for list fusion.
@@ -744,7 +764,7 @@ match_ = flip start
 -- This function may not have the most useful return type. For a
 -- version that returns the prefix itself as well as the remaining
 -- string, see @matches@ in "Data.Trie".
-matches_ :: Trie a -> ByteString -> [(Int,a)]
+matches_ :: Trie a -> Text -> [(Int,a)]
 matches_ t q =
 #if !defined(__GLASGOW_HASKELL__)
     matchFB_ t q (((:) .) . (,)) []
@@ -753,27 +773,27 @@ matches_ t q =
 {-# INLINE matches_ #-}
 #endif
 
-matchFB_ :: Trie a -> ByteString -> (Int -> a -> r -> r) -> r -> r
+matchFB_ :: Trie a -> Text -> (Int -> a -> r -> r) -> r -> r
 matchFB_ = \t q cons nil -> matchFB_' cons q t nil
     where
     matchFB_' cons = start
         where
         -- | Deal with epsilon query (when there is no epsilon value)
-        start q (Branch _ _ _ _) | S.null q = id
-        start q t                           = go 0 q t
+        start q (Branch _ _ _ _) | T.null q = id
+        start q t                               = go 0 q t
 
         -- | The main recursion
         go _ _    Empty       = id
 
         go n q   (Arc k mv t) =
-            let (p,k',q') = breakMaximalPrefix k q
-                n'        = n + S.length p
+            let (p,k',q') = breakMaximalPrefix k q -- foobar
+                n'        = n + length16 p
             in n' `seq`
-                if S.null k'
+                if T.null k'
                 then
                     case mv of { Nothing -> id; Just v  -> cons n' v}
                     .
-                    if S.null q' then id else go n' q' t
+                    if T.null q' then id else go n' q' t
                 else id
 
         go n q t_@(Branch _ _ _ _) = findArc t_
@@ -790,6 +810,7 @@ matchFB_ = \t q cons nil -> matchFB_' cons q t nil
             findArc Empty         = id
 
 
+
 {-----------------------------------------------------------
 -- Single-value modification functions (recurse and clone spine)
 -----------------------------------------------------------}
@@ -802,18 +823,19 @@ matchFB_ = \t q cons nil -> matchFB_' cons q t nil
 --
 -- | Generic function to alter a trie by one element with a function
 -- to resolve conflicts (or non-conflicts).
-alterBy :: (ByteString -> a -> Maybe a -> Maybe a)
-         -> ByteString -> a -> Trie a -> Trie a
+alterBy :: (Text -> a -> Maybe a -> Maybe a)
+             -> Text -> a -> Trie a -> Trie a
 alterBy f = alterBy_ (\k v mv t -> (f k v mv, t))
 -- TODO: use GHC's 'inline' function so that this gets specialized away.
 -- TODO: benchmark to be sure that this doesn't introduce unforseen performance costs because of the uncurrying etc.
 
 
+
 -- | A variant of 'alterBy' which also allows modifying the sub-trie.
-alterBy_ :: (ByteString -> a -> Maybe a -> Trie a -> (Maybe a, Trie a))
-         -> ByteString -> a -> Trie a -> Trie a
+alterBy_ :: (Text -> a -> Maybe a -> Trie a -> (Maybe a, Trie a))
+              -> Text -> a -> Trie a -> Trie a
 alterBy_ f_ q_ x_
-    | S.null q_ = alterEpsilon
+    | T.null q_ = alterEpsilon
     | otherwise = go q_
     where
     f         = f_ q_ x_
@@ -821,8 +843,8 @@ alterBy_ f_ q_ x_
 
     alterEpsilon t_@Empty                    = uncurry (arc q_) (f Nothing t_)
     alterEpsilon t_@(Branch _ _ _ _)         = uncurry (arc q_) (f Nothing t_)
-    alterEpsilon t_@(Arc k mv t) | S.null k  = uncurry (arc q_) (f mv      t)
-                                 | otherwise = uncurry (arc q_) (f Nothing t_)
+    alterEpsilon t_@(Arc k mv t) | T.null k  = uncurry (arc q_) (f mv      t)
+                                     | otherwise = uncurry (arc q_) (f Nothing t_)
 
 
     go q Empty            = nothing q
@@ -836,7 +858,7 @@ alterBy_ f_ q_ x_
 
     go q t_@(Arc k mv t) =
         let (p,k',q') = breakMaximalPrefix k q in
-        case (not $ S.null k', S.null q') of
+        case (not $ T.null k', T.null q') of
         (True,  True)  -> -- add node to middle of arc
                           uncurry (arc p) (f Nothing (Arc k' mv t))
         (True,  False) ->
@@ -847,7 +869,7 @@ alterBy_ f_ q_ x_
                     r = Arc k' mv t
 
                     -- inlined version of 'arc'
-                    arc' | S.null p  = id
+                    arc' | T.null p  = id
                          | otherwise = Arc p Nothing
 
         (False, True)  -> uncurry (arc k) (f mv t)
@@ -859,16 +881,16 @@ alterBy_ f_ q_ x_
 -- you are interested in inserting new keys or deleting old keys.
 -- Because this function does not need to worry about changing the
 -- trie structure, it is somewhat faster than 'alterBy'.
-adjustBy :: (ByteString -> a -> a -> a)
-         -> ByteString -> a -> Trie a -> Trie a
+adjustBy :: (Text -> a -> a -> a)
+              -> Text -> a -> Trie a -> Trie a
 adjustBy f_ q_ x_
-    | S.null q_ = adjustEpsilon
+    | T.null q_ = adjustEpsilon
     | otherwise = go q_
     where
     f = f_ q_ x_
 
-    adjustEpsilon (Arc k (Just v) t) | S.null k = Arc k (Just (f v)) t
-    adjustEpsilon t_                            = t_
+    adjustEpsilon (Arc k (Just v) t) | T.null k = Arc k (Just (f v)) t
+    adjustEpsilon t_                                = t_
 
     go _ Empty            = Empty
 
@@ -881,7 +903,7 @@ adjustBy f_ q_ x_
 
     go q t_@(Arc k mv t) =
         let (_,k',q') = breakMaximalPrefix k q in
-        case (not $ S.null k', S.null q') of
+        case (not $ T.null k', T.null q') of
         (True,  True)  -> t_ -- don't break arc inline
         (True,  False) -> t_ -- don't break arc branching
         (False, True)  -> Arc k (liftM f mv) t
@@ -908,17 +930,17 @@ mergeBy f = mergeBy'
     mergeBy'
         t0_@(Arc k0 mv0 t0)
         t1_@(Arc k1 mv1 t1)
-        | S.null k0 && S.null k1 = arc k0 (mergeMaybe f mv0 mv1) (go t0 t1)
-        | S.null k0              = arc k0 mv0 (go t0 t1_)
-        |              S.null k1 = arc k1 mv1 (go t1 t0_)
+        | T.null k0 && T.null k1 = arc k0 (mergeMaybe f mv0 mv1) (go t0 t1)
+        | T.null k0              = arc k0 mv0 (go t0 t1_)
+        |              T.null k1 = arc k1 mv1 (go t1 t0_)
     mergeBy'
         (Arc k0 mv0@(Just _) t0)
         t1_@(Branch _ _ _ _)
-        | S.null k0              = arc k0 mv0 (go t0 t1_)
+        | T.null k0              = arc k0 mv0 (go t0 t1_)
     mergeBy'
         t0_@(Branch _ _ _ _)
         (Arc k1 mv1@(Just _) t1)
-        | S.null k1              = arc k1 mv1 (go t1 t0_)
+        | T.null k1              = arc k1 mv1 (go t1 t0_)
     mergeBy' t0_ t1_             = go t0_ t1_
 
 
@@ -955,16 +977,16 @@ mergeBy f = mergeBy'
             (Arc k1 mv1 t1)
             | m' == 0 =
                 let (pre,k0',k1') = breakMaximalPrefix k0 k1 in
-                if S.null pre
+                if T.null pre
                 then error "mergeBy: no mask, but no prefix string"
                 else let {-# INLINE arcMerge #-}
                          arcMerge mv' t1' t2' = arc pre mv' (go t1' t2')
-                     in case (S.null k0', S.null k1') of
+                     in case (T.null k0', T.null k1') of
                          (True, True)  -> arcMerge (mergeMaybe f mv0 mv1) t0 t1
                          (True, False) -> arcMerge mv0 t0 (Arc k1' mv1 t1)
                          (False,True)  -> arcMerge mv1 (Arc k0' mv0 t0) t1
                          (False,False) -> arcMerge Nothing (Arc k0' mv0 t0)
-                                                           (Arc k1' mv1 t1)
+                                                               (Arc k1' mv1 t1)
         go' (Arc _ _ _)
             (Branch _p1 m1 l r)
             | nomatch p0 p1 m1 = branchMerge p1 t1_  p0 t0_
@@ -978,7 +1000,8 @@ mergeBy f = mergeBy'
 
         -- Inlined branchMerge. Both tries are disjoint @Arc@s now.
         go' _ _ | zero p0 m'   = Branch p' m' t0_ t1_
-        go' _ _                = Branch p' m' t1_ t0_
+        go' _ _                    = Branch p' m' t1_ t0_
+
 
 
 mergeMaybe :: (a -> a -> Maybe a) -> Maybe a -> Maybe a -> Maybe a
@@ -993,50 +1016,50 @@ mergeMaybe f (Just v0)   (Just v1) = f v0 v1
 -- Priority-queue functions
 -----------------------------------------------------------}
 
-minAssoc :: Trie a -> Maybe (ByteString, a)
-minAssoc = go S.empty
+minAssoc :: Trie a -> Maybe (Text, a)
+minAssoc = go T.empty
     where
     go _ Empty              = Nothing
-    go q (Arc k (Just v) _) = Just (S.append q k,v)
-    go q (Arc k Nothing  t) = go   (S.append q k) t
+    go q (Arc k (Just v) _) = Just (T.append q k,v)
+    go q (Arc k Nothing  t) = go   (T.append q k) t
     go q (Branch _ _ l _)   = go q l
 
 
-maxAssoc :: Trie a -> Maybe (ByteString, a)
-maxAssoc = go S.empty
+maxAssoc :: Trie a -> Maybe (Text, a)
+maxAssoc = go T.empty
     where
     go _ Empty                  = Nothing
-    go q (Arc k (Just v) Empty) = Just (S.append q k,v)
-    go q (Arc k _        t)     = go   (S.append q k) t
+    go q (Arc k (Just v) Empty) = Just (T.append q k,v)
+    go q (Arc k _        t)     = go   (T.append q k) t
     go q (Branch _ _ _ r)       = go q r
 
 
 mapView :: (Trie a -> Trie a)
-        -> Maybe (ByteString, a, Trie a) -> Maybe (ByteString, a, Trie a)
+            -> Maybe (Text, a, Trie a) -> Maybe (Text, a, Trie a)
 mapView _ Nothing        = Nothing
 mapView f (Just (k,v,t)) = Just (k,v, f t)
 
 
-updateMinViewBy :: (ByteString -> a -> Maybe a)
-                -> Trie a -> Maybe (ByteString, a, Trie a)
-updateMinViewBy f = go S.empty
+updateMinViewBy :: (Text -> a -> Maybe a)
+                     -> Trie a -> Maybe (Text, a, Trie a)
+updateMinViewBy f = go T.empty
     where
     go _ Empty              = Nothing
-    go q (Arc k (Just v) t) = let q' = S.append q k
+    go q (Arc k (Just v) t) = let q' = T.append q k
                               in Just (q',v, arc k (f q' v) t)
-    go q (Arc k Nothing  t) = mapView (arc k Nothing) (go (S.append q k) t)
+    go q (Arc k Nothing  t) = mapView (arc k Nothing) (go (T.append q k) t)
     go q (Branch p m l r)   = mapView (\l' -> branch p m l' r) (go q l)
 
-
-updateMaxViewBy :: (ByteString -> a -> Maybe a)
-                -> Trie a -> Maybe (ByteString, a, Trie a)
-updateMaxViewBy f = go S.empty
+updateMaxViewBy :: (Text -> a -> Maybe a)
+                    -> Trie a -> Maybe (Text, a, Trie a)
+updateMaxViewBy f = go T.empty
     where
     go _ Empty                  = Nothing
-    go q (Arc k (Just v) Empty) = let q' = S.append q k
-                                  in Just (q',v, arc k (f q' v) Empty)
-    go q (Arc k mv       t)     = mapView (arc k mv) (go (S.append q k) t)
+    go q (Arc k (Just v) Empty) = let q' = T.append q k
+                                          in Just (q',v, arc k (f q' v) Empty)
+    go q (Arc k mv       t)     = mapView (arc k mv) (go (T.append q k) t)
     go q (Branch p m l r)       = mapView (branch p m l) (go q r)
 
 ------------------------------------------------------------
 ------------------------------------------------------- fin.
+

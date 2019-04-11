@@ -1,44 +1,41 @@
 {-# OPTIONS_GHC -Wall -fwarn-tabs #-}
 
 ----------------------------------------------------------------
---                                                  ~ 2009.01.04
+--                                                  ~ 2019.04.03
 -- |
--- Module      :  FromListBench
--- Copyright   :  Copyright (c) 2008--2009 wren gayle romano
+-- Module      :  FromListBench.Text
+-- Copyright   :  Copyright (c) 2008--2009 wren gayle romano, 2019 michael j. klein
 -- License     :  BSD3
--- Maintainer  :  wren@community.haskell.org
--- Stability   :  provisional
--- Portability :  portable
+-- Maintainer  :  lambdamichael@gmail.com
+-- Stability   :  experimental
 --
 -- Benchmarking for left- vs right-fold for @fromList@.
 ----------------------------------------------------------------
 
-module FromListBench (test) where
+module FromListBench.Text (test) where
 
-import qualified Data.Trie as Tr
-import Data.Trie.Convenience (insertIfAbsent)
+import qualified Data.Trie.Text as Tr
+import Data.Trie.Text.Convenience (insertIfAbsent)
 import Data.List             (foldl', sort)
-import qualified Data.ByteString as S
-
-import Data.ByteString.Internal (c2w)
+import qualified Data.Text as T
 
 import Microbench
 import Control.Exception     (evaluate)
 ----------------------------------------------------------------
 
-fromListR, fromListL :: [(S.ByteString, a)] -> Tr.Trie a
+fromListR, fromListL :: [(T.Text, a)] -> Tr.Trie a
 fromListR = foldr  (uncurry Tr.insert) Tr.empty
 fromListL = foldl' (flip $ uncurry $ insertIfAbsent) Tr.empty
 
-getList, getList'  :: S.ByteString -> Int -> [(S.ByteString, Int)]
-getList  xs n = map (\k -> (k,0)) . S.inits . S.take n $ xs
-getList' xs n = map (\k -> (k,0)) . S.tails . S.take n $ xs
+getList, getList'  :: T.Text -> Int -> [(T.Text, Int)]
+getList  xs n = map (\k -> (k,0)) . T.inits . T.take n $ xs
+getList' xs n = map (\k -> (k,0)) . T.tails . T.take n $ xs
 
 test :: IO ()
-test  = do
+test = do
     -- 100000 is large enough to trigger Microbench's stop condition,
     -- and small enough to not lock up the system in trying to create it.
-    xs <- evaluate $ S.replicate 100000 (c2w 'a')
+    xs <- evaluate $ T.replicate 100000 (T.singleton 'a')
 
     microbench "fromListR obverse" (Tr.null . fromListR . getList xs)
     microbench "fromListL obverse" (Tr.null . fromListL . getList xs)
@@ -58,3 +55,4 @@ test  = do
 
 ----------------------------------------------------------------
 ----------------------------------------------------------- fin.
+
