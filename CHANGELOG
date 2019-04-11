@@ -2,3 +2,4 @@
 - Fixed things to compile with stack lts-13.15
 - Modified ByteString cases to use Text
 - Modified tests to use Text Trie (e.g. change `Ord` instance to the one produced by `toList16`)
+- Modified functions that accept/return built `Text` to use `Data.Text.Lazy`

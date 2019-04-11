@@ -1,3 +1,19 @@
+###############################################################
+#                                                  ~ 2019.04.11
+# |
+# Copyright   :  Copyright (c) 2019 michael j. klein
+# License     :  BSD3
+# Maintainer  :  lambdamichael@gmail.com
+#
+# Parse and output markdown tables comparing benchmarks.
+#
+# To use:
+#   stack test | tee test.log
+#   ruby parse_bench.rb
+#
+# Output is written to `bench.md`.
+###############################################################
+
 
 module Enumerable
   def span(&block)

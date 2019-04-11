@@ -1,6 +1,18 @@
 {-# OPTIONS_GHC -Wall -fwarn-tabs #-}
 {-# LANGUAGE BangPatterns #-}
 
+----------------------------------------------------------------
+--                                                  ~ 2019.04.11
+-- |
+-- Module      :  Data.Trie.Text.Convenience
+-- Copyright   :  Copyright (c) 2019 michael j. klein
+-- License     :  BSD3
+-- Maintainer  :  lambdamichael@gmail.com
+-- Stability   :  experimental
+--
+-- Methods for accessing `Text` in terms of its constituent `Word16`'s
+----------------------------------------------------------------
+
 module Data.Text.Internal.Word16 where
 
 import Data.Text (Text)
