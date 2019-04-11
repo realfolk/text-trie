@@ -1,7 +1,7 @@
 text-trie
 ===============
-[![Hackage version](https://img.shields.io/hackage/v/bytestring-trie.svg?style=flat)](https://hackage.haskell.org/package/text-trie) 
-[![TravisCI Build Status](https://img.shields.io/travis/michaeljklein/bytestring-trie.svg?style=flat)](https://travis-ci.org/michaeljklein/text-trie) 
+[![Hackage version](https://img.shields.io/hackage/v/bytestring-trie.svg?style=flat)](https://hackage.haskell.org/package/text-trie)
+[![Build Status](https://travis-ci.org/michaeljklein/text-trie.svg?branch=master)](https://travis-ci.org/michaeljklein/text-trie)
 
 The `text-trie` package is a lightweight adaptation of `bytestring-trie` to `Text`.
 
