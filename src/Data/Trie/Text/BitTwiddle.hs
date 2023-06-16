@@ -1,8 +1,9 @@
 {-# OPTIONS_GHC -Wall -fwarn-tabs -fno-warn-name-shadowing #-}
 
 -- The MagicHash is for unboxed primitives (-fglasgow-exts also works)
-{-# LANGUAGE CPP, MagicHash #-}
 {-# LANGUAGE BangPatterns #-}
+{-# LANGUAGE CPP          #-}
+{-# LANGUAGE MagicHash    #-}
 
 ----------------------------------------------------------------
 --                                                  ~ 2019.04.03
@@ -21,25 +22,31 @@
 ----------------------------------------------------------------
 
 module Data.Trie.Text.BitTwiddle
-    ( Prefix, Mask
-
-    , zero, nomatch
-
-    , mask, shorter, branchMask
+    ( Mask
+    , Prefix
+    , branchMask
+    , mask
+    , nomatch
+    , shorter
+    , zero
     ) where
 
-import Data.Trie.TextInternal (TextElem)
+import           Data.Trie.TextInternal (TextElem)
 
-import Data.Bits
+import           Data.Bits
 
-#if __GLASGOW_HASKELL__ >= 503
-import GHC.Exts  (Int(..), uncheckedShiftRL# )
-import GHC.Word (Word16(..))
+#if __GLASGOW_HASKELL__ >= 902
+import           GHC.Exts               (Int (..), uncheckedShiftRLWord16#)
+import           GHC.Word               (Word16 (..))
+#elif __GLASGOW_HASKELL__ >= 503
+import           GHC.Exts               (Int (..), uncheckedShiftRL#)
+import           GHC.Word               (Word16 (..))
 #elif __GLASGOW_HASKELL__
-import GlaExts   ( Word8(..), Int(..), uncheckedShiftRL# )
-import GHC.Word (Word16(..))
+import           GHC.Word               (Word16 (..))
+import           GlaExts                (Int (..), Word8 (..),
+                                         uncheckedShiftRL#)
 #else
-import Data.Word (Word16(..))
+import           Data.Word              (Word16 (..))
 #endif
 
 ----------------------------------------------------------------
@@ -51,11 +58,13 @@ type Mask    = KeyElem
 
 uncheckedShiftRL :: Word16 -> Int -> Word16
 {-# INLINE [0] uncheckedShiftRL #-}
-#if __GLASGOW_HASKELL__
+#if __GLASGOW_HASKELL__ >= 902
+uncheckedShiftRL (W16# x) (I# i) = W16# (uncheckedShiftRLWord16# x i)
+#elif __GLASGOW_HASKELL__
 -- GHC: use unboxing to get @uncheckedShiftRL@ inlined.
 uncheckedShiftRL (W16# x) (I# i) = W16# (uncheckedShiftRL# x i)
 #else
-uncheckedShiftRL x i = shiftR x i
+uncheckedShiftRL x i             = shiftR x i
 #endif
 
 
